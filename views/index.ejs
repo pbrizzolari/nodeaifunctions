@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Ask GPT-4</title>
+</head>
+<body>
+    <h1>Ask GPT-4</h1>
+    <form action="/ask" method="POST">
+        <label for="question">Question:</label><br>
+        <textarea id="question" name="question" style="width: 100%; height:20%"></textarea><br>
+        <input type="submit" value="Ask">
+    </form>
+
+    <% if (typeof output !== 'undefined') { %>
+        <h2>Response:</h2>
+        <pre><%= output %></pre>
+    <% } %>
+</body>
+</html>
