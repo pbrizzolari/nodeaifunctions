@@ -77,62 +77,82 @@ const openaiConfig = {
 
 let history = [];
 
-// Available functions for the AI
-const availableFunctions = {
-  'calculator': (input) => math.evaluate(input),
-  'search': async (query) => {
-    const data = await serp.json({
-      q: query
-    });
-    return data.organic_results.map(result => result.title).join(', ');
-  }
-};
-
 app.get('/', (req, res) => { // Serve the EJS page
   res.render('index', { history });
 });
 
+const availableFunctions = {
+  "calculator": (expression) => math.evaluate(expression),
+  "search": (query) => {
+    const search = new serpapi.GoogleSearch(process.env.SERPAPI_API_KEY);
+    return search.json({ q: query });
+  }
+};
+
 app.post('/ask', async (req, res) => {
-  const { question } = req.body;
-  history.push({role: 'user', content: promptTemplate.replace("{question}", question)});
+  let question = req.body.question;
+  let history = [
+    {role: 'system', content: 'You are a general purpose AI called Oracle. You will try to answer questions to the best of your ability.'},
+    {role: 'user', content: promptTemplate.replace("{question}", question)}
+  ];
 
   let finalAnswer = null;
-  let output = '';
 
   while(finalAnswer === null) {
-    // Send the question to OpenAI
-    let response = await axios.post(openaiUrl, { model: "gpt-4-0613", messages: history }, openaiConfig);
-    output = response.data.choices[0].message.content;
-
-    // Parse the output to get the action and action input
-    let lines = output.split('\n');
-    for(let i = 0; i < lines.length; i += 2) {
-      if(lines[i].startsWith('Action: ')) {
-        let action = lines[i].replace('Action: ', '');
-        let actionInput = lines[i+1].replace('Action Input: ', '');
-        console.log(action);
-        console.log(actionInput);
-        if(action in availableFunctions) {
-          let observation = await availableFunctions[action](actionInput);
-          history.push({role: 'assistant', content: `Observation: ${observation}`});
-        } else {
-          history.push({role: 'assistant', content: 'Thought: I cannot perform the requested action.'});
-          break;
+    let response = await axios.post(openaiUrl, {
+      model: "gpt-4-0613",
+      messages: history,
+      functions: [
+        {
+          "name": "search",
+          "description": "Query a search engine",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "description": "The search query"
+              }
+            },
+            "required": ["query"]
+          }
+        },
+        {
+          "name": "calculator",
+          "description": "Calculate the result of a math expression",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "expression": {
+                "type": "string",
+                "description": "The math expression to calculate"
+              }
+            },
+            "required": ["expression"]
+          }
         }
-      } else if(lines[i].startsWith('Final Answer: ')) {
-        finalAnswer = lines[i].replace('Final Answer: ', '');
-        history.push({role: 'assistant', content: `Final Answer: ${finalAnswer}`});
-        break;
+      ]
+    }, openaiConfig);
+
+    if (response.data.choices[0].message.function_call) {
+      let functionCall = response.data.choices[0].message.function_call;
+      let functionName = functionCall.name;
+      let functionArguments = JSON.parse(functionCall.arguments);
+      if (functionName in availableFunctions) {
+        let result = await availableFunctions[functionName](...Object.values(functionArguments));
+        history.push({role: 'assistant', content: `Result: ${result}`});
       } else {
-          finalAnswer = output;
-        history.push({role: 'assistant', content: output});
-        break;
+        history.push({role: 'assistant', content: 'Thought: I cannot perform the requested action.'});
       }
+    } else {
+      let content = response.data.choices[0].message.content;
+      if (!content.startsWith("Thought: "))
+        finalAnswer = content;
+      history.push({role: 'assistant', content: content});
     }
   }
 
-  // Render the EJS page with the output
-  res.render('index', { output: finalAnswer || output, history });
+  res.render('index', { output: finalAnswer, history });
 });
 
 app.listen(3000, () => console.log('Server running on port 3000'));
